@@ -395,7 +395,7 @@ static int update_config(struct cpuwatch_bpf *skel, const struct app_options *op
 		.rate_limit_syscall = SYS_openat,
 	};
 	__u32 key = CPUWATCH_CONFIG_KEY;
-	int fd = bpf_map__fd(skel->maps.config);
+	int fd = bpf_map__fd(skel->maps.runtime_cfg);
 
 	if (bpf_map_update_elem(fd, &key, &cfg, BPF_ANY)) {
 		fprintf(stderr, "[ERROR] unable to configure BPF maps: %s\n", strerror(errno));

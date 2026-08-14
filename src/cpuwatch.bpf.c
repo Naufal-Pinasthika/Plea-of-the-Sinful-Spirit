@@ -21,7 +21,7 @@ struct {
 	__uint(max_entries, 1);
 	__type(key, __u32);
 	__type(value, struct cpuwatch_config);
-} config SEC(".maps");
+} runtime_cfg SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -53,7 +53,7 @@ static __always_inline struct cpuwatch_config *get_config(void)
 {
 	__u32 key = CPUWATCH_CONFIG_KEY;
 
-	return bpf_map_lookup_elem(&config, &key);
+	return bpf_map_lookup_elem(&runtime_cfg, &key);
 }
 
 static __always_inline struct cpuwatch_cpu_stats *get_stats(void)

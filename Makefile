@@ -18,13 +18,13 @@ TARGET_ARCH_arm64 := arm64
 TARGET_ARCH_riscv64 := riscv
 TARGET_ARCH_s390x := s390
 TARGET_ARCH := $(or $(TARGET_ARCH_$(HOST_ARCH)),$(HOST_ARCH))
-MULTIARCH := $(shell $(CC) -print-multiarch 2>/dev/null)
+MULTIARCH := $(shell $(CC) -print-multiarch 2>/dev/null || gcc -print-multiarch 2>/dev/null)
 
 CPPFLAGS := -I$(SRC_DIR) -I$(BUILD_DIR)
 CFLAGS ?= -O2 -g
 CFLAGS += -std=gnu11 -Wall -Wextra -Wpedantic
 BPF_CFLAGS := -g -O2 -target bpf -D__TARGET_ARCH_$(TARGET_ARCH) \
-	-I$(BUILD_DIR) -I$(SRC_DIR)
+	-I$(BUILD_DIR) -I$(SRC_DIR) -I/usr/include
 ifneq ($(MULTIARCH),)
 BPF_CFLAGS += -I/usr/include/$(MULTIARCH)
 endif
@@ -116,4 +116,3 @@ help:
 	@echo "make benchmark  run the VM-only benchmark workflow"
 	@echo "make report     render docs/REPORT.md as PDF"
 	@echo "make clean      remove generated build artifacts"
-
