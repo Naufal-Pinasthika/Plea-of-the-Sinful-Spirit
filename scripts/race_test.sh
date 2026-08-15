@@ -36,8 +36,10 @@ if [[ -z "$ready_line" ]]; then
 fi
 target_pid=$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' <<<"$ready_line")
 
-"$repo_dir/build/cpuwatch" --pid "$target_pid" --syscall getpid --json --no-events --interval 500 \
-    >"$temporary_dir/stats.jsonl" 2>"$temporary_dir/cpuwatch.log" &
+duration=${DURATION:-30}
+"$repo_dir/build/cpuwatch" --pid "$target_pid" --syscall getpid --no-events \
+    --interval 500 --duration "$duration" \
+    >"$temporary_dir/stats.log" 2>"$temporary_dir/cpuwatch.log" &
 monitor_pid=$!
 for _ in $(seq 1 200); do
     grep -q '^CPUWATCH_READY ' "$temporary_dir/cpuwatch.log" 2>/dev/null && break
@@ -56,8 +58,8 @@ kill -INT "$monitor_pid"
 wait "$monitor_pid"
 monitor_pid=""
 
-python3 - "$temporary_dir/race.log" "$temporary_dir/stats.jsonl" <<'PY'
-import json
+python3 - "$temporary_dir/race.log" "$temporary_dir/stats.log" \
+    >"$temporary_dir/race-validation.txt" <<'PY'
 import re
 import sys
 
@@ -73,11 +75,11 @@ for line in open(sys.argv[1], encoding="utf-8"):
 
 observed = {}
 for line in open(sys.argv[2], encoding="utf-8"):
-    sample = json.loads(line)
-    if sample.get("record") != "stats":
+    fields = [field.strip() for field in line.split("|")]
+    if len(fields) < 4 or not fields[1].isdigit():
         continue
-    for cpu in sample["cpus"]:
-        observed[cpu["cpu"]] = observed.get(cpu["cpu"], 0) + cpu["syscalls_delta"]
+    cpu = int(fields[1])
+    observed[cpu] = observed.get(cpu, 0) + int(fields[3])
 
 failed = False
 for cpu, wanted in sorted(expected.items()):
@@ -89,8 +91,10 @@ print(f"TOTAL expected={expected_total} observed={total} difference={total-expec
 failed |= total != expected_total
 raise SystemExit(1 if failed else 0)
 PY
+cat "$temporary_dir/race-validation.txt"
 
 mkdir -p "$repo_dir/evidence"
 cp "$temporary_dir/race.log" "$repo_dir/evidence/race-workload.txt"
-cp "$temporary_dir/stats.jsonl" "$repo_dir/evidence/race-stats.jsonl"
+cp "$temporary_dir/stats.log" "$repo_dir/evidence/race-stats.log"
+cp "$temporary_dir/race-validation.txt" "$repo_dir/evidence/race-validation.txt"
 echo "Race validation passed; evidence saved under evidence/."

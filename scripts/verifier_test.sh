@@ -30,7 +30,7 @@ fi
 echo "Verifier rejected the intentionally invalid object as expected."
 
 set +e
-"$cpuwatch" --json --duration 1 --no-events \
+"$cpuwatch" --duration 1 --no-events \
     >"$evidence_dir/verifier-accepted.txt" 2>&1
 good_status=$?
 set -e
@@ -39,4 +39,3 @@ if [[ $good_status -ne 0 ]]; then
     exit 1
 fi
 echo "Production object loaded successfully. Evidence saved under evidence/."
-

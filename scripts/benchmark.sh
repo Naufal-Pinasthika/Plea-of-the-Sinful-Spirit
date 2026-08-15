@@ -97,7 +97,7 @@ start_monitor() {
     fi
     monitor_mode=$mode
     : >"$temporary_dir/$mode-monitor.log"
-    "$repo_dir/build/cpuwatch" --json --interval 1000 \
+    "$repo_dir/build/cpuwatch" --interval 1000 \
         --pid "$workload_target_pid" --syscall "$syscall_name" "$@" \
         >/dev/null 2>"$temporary_dir/$mode-monitor.log" &
     monitor_pid=$!

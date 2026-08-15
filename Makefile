@@ -38,7 +38,7 @@ endif
 TOOLS := syscall_bench race_test pagefault_test rate_limit_test
 TOOL_BINARIES := $(addprefix $(BUILD_DIR)/,$(TOOLS))
 
-.PHONY: all clean check tools verifier test benchmark report help
+.PHONY: all clean check tools verifier test benchmark test-mandatory test-pagefault test-rate-limit test-race test-open-hooks report help
 
 all: $(BUILD_DIR)/cpuwatch tools
 
@@ -99,6 +99,26 @@ benchmark: all
 	@echo "This target runs privileged workloads and must only be used in the test VM."
 	./scripts/benchmark.sh
 
+test-mandatory: all
+	@echo "This target runs a one-shot mandatory-hook evidence test in the VM."
+	./scripts/test_mandatory.sh
+
+test-pagefault: all
+	@echo "This target runs the page-fault bonus evidence test in the VM."
+	./scripts/test_pagefault.sh
+
+test-rate-limit: all
+	@echo "This target runs the BPF LSM rate-limit evidence test in the VM."
+	./scripts/test_rate_limit.sh
+
+test-race: all
+	@echo "This target runs the exact per-CPU race validation in the VM."
+	./scripts/race_test.sh
+
+test-open-hooks: all
+	@echo "This target runs fentry and kprobe open-hook evidence tests in the VM."
+	./scripts/test_open_hooks.sh both
+
 report: docs/REPORT.md | $(BUILD_DIR)
 	@command -v $(PANDOC) >/dev/null 2>&1 || { \
 		echo "pandoc is required to build the PDF report" >&2; exit 1; }
@@ -114,5 +134,10 @@ help:
 	@echo "make verifier   build the intentionally invalid verifier example"
 	@echo "make test       compile and run non-privileged static/safe checks"
 	@echo "make benchmark  run the VM-only benchmark workflow"
+	@echo "make test-mandatory   capture one-shot mandatory-hook evidence"
+	@echo "make test-pagefault   capture page-fault bonus evidence"
+	@echo "make test-rate-limit  capture BPF LSM rate-limit evidence"
+	@echo "make test-race        validate exact per-CPU syscall counts"
+	@echo "make test-open-hooks  capture fentry and kprobe evidence"
 	@echo "make report     render docs/REPORT.md as PDF"
 	@echo "make clean      remove generated build artifacts"
