@@ -669,25 +669,61 @@ static void emit_json(const struct cpuwatch_cpu_rate *rates, int nr_cpus,
 		if (cpu)
 			putchar(',');
 		printf("{\"cpu\":%d,\"syscalls_delta\":%llu,\"syscalls_per_s\":%.3f,\"context_switches_delta\":%llu,\"context_switches_per_s\":%.3f,"
-		       "\"page_faults_per_s\":%.3f,\"limited_per_s\":%.3f,\"drops_per_s\":%.3f}",
+		       "\"page_faults_delta\":%llu,\"page_faults_per_s\":%.3f,"
+		       "\"limited_delta\":%llu,\"limited_per_s\":%.3f,"
+		       "\"drops_delta\":%llu,\"drops_per_s\":%.3f}",
 		       cpu, rates[cpu].syscall_delta, rates[cpu].syscalls,
 		       rates[cpu].context_switch_delta, rates[cpu].context_switches,
-		       rates[cpu].page_faults, rates[cpu].rate_limited, rates[cpu].ringbuf_drops);
+		       rates[cpu].page_fault_delta, rates[cpu].page_faults,
+		       rates[cpu].rate_limited_delta, rates[cpu].rate_limited,
+		       rates[cpu].ringbuf_drop_delta, rates[cpu].ringbuf_drops);
 		total.syscalls += rates[cpu].syscalls;
 		total.syscall_delta += rates[cpu].syscall_delta;
 		total.context_switches += rates[cpu].context_switches;
 		total.context_switch_delta += rates[cpu].context_switch_delta;
 		total.page_faults += rates[cpu].page_faults;
+		total.page_fault_delta += rates[cpu].page_fault_delta;
 		total.rate_limited += rates[cpu].rate_limited;
+		total.rate_limited_delta += rates[cpu].rate_limited_delta;
 		total.ringbuf_drops += rates[cpu].ringbuf_drops;
+		total.ringbuf_drop_delta += rates[cpu].ringbuf_drop_delta;
 	}
 	printf("],\"total\":{\"syscalls_delta\":%llu,\"syscalls_per_s\":%.3f,"
 	       "\"context_switches_delta\":%llu,\"context_switches_per_s\":%.3f,"
-	       "\"page_faults_per_s\":%.3f,\"limited_per_s\":%.3f,\"drops_per_s\":%.3f}}\n",
+	       "\"page_faults_delta\":%llu,\"page_faults_per_s\":%.3f,"
+	       "\"limited_delta\":%llu,\"limited_per_s\":%.3f,"
+	       "\"drops_delta\":%llu,\"drops_per_s\":%.3f}}\n",
 	       total.syscall_delta, total.syscalls,
-	       total.context_switch_delta, total.context_switches, total.page_faults,
-	       total.rate_limited, total.ringbuf_drops);
+	       total.context_switch_delta, total.context_switches,
+	       total.page_fault_delta, total.page_faults,
+	       total.rate_limited_delta, total.rate_limited,
+	       total.ringbuf_drop_delta, total.ringbuf_drops);
 	fflush(stdout);
+}
+
+static int sample_and_emit_stats(int stats_fd,
+				 struct cpuwatch_cpu_stats *previous,
+				 struct cpuwatch_cpu_stats *current,
+				 struct cpuwatch_cpu_rate *rates, int nr_cpus,
+				 const struct timespec *started,
+				 struct timespec *sampled,
+				 const struct timespec *now,
+				 const struct app_options *opts,
+				 const char *kernel_release)
+{
+	double sample_seconds = elapsed_seconds(sampled, now);
+
+	if (sample_seconds <= 0.0)
+		return 0;
+	if (read_rates(stats_fd, previous, current, rates, nr_cpus, sample_seconds))
+		return -1;
+	if (opts->json)
+		emit_json(rates, nr_cpus, elapsed_seconds(started, now), sample_seconds);
+	else
+		cpuwatch_ui_render(kernel_release, rates, nr_cpus, opts->interval_ms,
+				   elapsed_seconds(started, now));
+	*sampled = *now;
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -700,6 +736,7 @@ int main(int argc, char **argv)
 	struct app_options opts;
 	struct timespec started, sampled, now;
 	struct utsname uts = {0};
+	bool terminal_sample_done = false;
 	int nr_cpus, stats_fd, error = 0;
 
 	_Static_assert(sizeof(struct cpuwatch_cpu_stats) % 8 == 0,
@@ -787,29 +824,38 @@ int main(int argc, char **argv)
 		error = ring_buffer__poll(ring, 100);
 		if (error == -EINTR) {
 			error = 0;
-			continue;
 		}
 		if (error < 0) {
 			fprintf(stderr, "[ERROR] ring-buffer polling failed: %s\n", strerror(-error));
 			break;
 		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
-		if (elapsed_seconds(&sampled, &now) * 1000.0 < opts.interval_ms)
-			continue;
-		double sample_seconds = elapsed_seconds(&sampled, &now);
-		if (read_rates(stats_fd, previous, current, rates, nr_cpus, sample_seconds)) {
+		bool interval_due = elapsed_seconds(&sampled, &now) * 1000.0 >= opts.interval_ms;
+		bool duration_due = opts.duration_sec > 0.0 &&
+			elapsed_seconds(&started, &now) >= opts.duration_sec;
+		bool terminal_due = exiting || duration_due;
+
+		if ((interval_due || terminal_due) &&
+		    sample_and_emit_stats(stats_fd, previous, current, rates, nr_cpus,
+					  &started, &sampled, &now, &opts, uts.release)) {
 			error = -1;
 			break;
 		}
-		if (opts.json)
-			emit_json(rates, nr_cpus, elapsed_seconds(&started, &now), sample_seconds);
-		else
-			cpuwatch_ui_render(uts.release, rates, nr_cpus, opts.interval_ms,
-					   elapsed_seconds(&started, &now));
-		sampled = now;
-		if (opts.duration_sec > 0.0 &&
-		    elapsed_seconds(&started, &now) >= opts.duration_sec)
+		if (terminal_due) {
+			terminal_sample_done = true;
 			break;
+		}
+	}
+	if (!terminal_sample_done) {
+		int saved_error = error;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (sample_and_emit_stats(stats_fd, previous, current, rates, nr_cpus,
+					  &started, &sampled, &now, &opts, uts.release) &&
+		    saved_error >= 0)
+			error = -1;
+		else
+			error = saved_error;
 	}
 
 cleanup:

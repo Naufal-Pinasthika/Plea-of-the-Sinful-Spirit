@@ -63,6 +63,12 @@ static __always_inline struct cpuwatch_cpu_stats *get_stats(void)
 	return bpf_map_lookup_elem(&stats, &key);
 }
 
+static __always_inline void increment_stat(__u64 *counter)
+{
+	/* Keep userspace snapshots coherent with concurrent kernel updates. */
+	__sync_fetch_and_add(counter, 1);
+}
+
 static __always_inline bool syscall_selected(const struct cpuwatch_config *cfg,
 					      __u32 tgid, __s64 syscall_nr)
 {
@@ -110,7 +116,7 @@ static __always_inline struct cpuwatch_event *reserve_event(
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) {
 		if (cpu_stats)
-			cpu_stats->ringbuf_drops++;
+			increment_stat(&cpu_stats->ringbuf_drops);
 		return 0;
 	}
 
@@ -142,13 +148,17 @@ int handle_sys_enter(struct trace_event_raw_sys_enter *ctx)
 
 	cpu_stats = get_stats();
 	if (cpu_stats)
-		cpu_stats->syscall_enter++;
+		increment_stat(&cpu_stats->syscall_enter);
 
 	state.timestamp_ns = bpf_ktime_get_ns();
 	state.syscall_nr = syscall_nr;
-#pragma unroll
-	for (i = 0; i < 6; i++)
-		state.args[i] = ctx->args[i];
+	/* Keep tracepoint context accesses constant-offset for the verifier. */
+	state.args[0] = ctx->args[0];
+	state.args[1] = ctx->args[1];
+	state.args[2] = ctx->args[2];
+	state.args[3] = ctx->args[3];
+	state.args[4] = ctx->args[4];
+	state.args[5] = ctx->args[5];
 	bpf_map_update_elem(&inflight, &pid_tgid, &state, BPF_ANY);
 
 	event = reserve_event(cfg, cpu_stats, CPUWATCH_EVENT_SYSCALL_ENTER);
@@ -183,7 +193,7 @@ int handle_sys_exit(struct trace_event_raw_sys_exit *ctx)
 
 	cpu_stats = get_stats();
 	if (cpu_stats)
-		cpu_stats->syscall_exit++;
+		increment_stat(&cpu_stats->syscall_exit);
 	state = bpf_map_lookup_elem(&inflight, &pid_tgid);
 	if (state && now >= state->timestamp_ns)
 		duration = now - state->timestamp_ns;
@@ -213,7 +223,7 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx)
 	struct cpuwatch_event *event;
 
 	if (cpu_stats)
-		cpu_stats->context_switches++;
+		increment_stat(&cpu_stats->context_switches);
 	event = reserve_event(cfg, cpu_stats, CPUWATCH_EVENT_SCHED_SWITCH);
 	if (!event)
 		return 0;
@@ -242,7 +252,7 @@ int BPF_KPROBE(handle_page_fault, struct vm_area_struct *vma,
 		return 0;
 	cpu_stats = get_stats();
 	if (cpu_stats)
-		cpu_stats->page_faults++;
+		increment_stat(&cpu_stats->page_faults);
 	event = reserve_event(cfg, cpu_stats, CPUWATCH_EVENT_PAGE_FAULT);
 	if (!event)
 		return 0;
@@ -403,7 +413,7 @@ int BPF_PROG(enforce_file_open, struct file *file, int ret)
 	state->denied++;
 	cpu_stats = get_stats();
 	if (cpu_stats)
-		cpu_stats->rate_limited++;
+		increment_stat(&cpu_stats->rate_limited);
 	event = reserve_event(cfg, cpu_stats, CPUWATCH_EVENT_RATE_LIMIT);
 	if (event) {
 		event->data.rate_limit.target_syscall = cfg->rate_limit_syscall;

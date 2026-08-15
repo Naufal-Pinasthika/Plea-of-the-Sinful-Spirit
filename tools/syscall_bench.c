@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,7 @@ int main(int argc, char **argv)
 		{ "mode", required_argument, NULL, 'm' },
 		{ "syscall", required_argument, NULL, 's' },
 		{ "header", no_argument, NULL, 'H' },
+		{ "wait-signal", no_argument, NULL, 'W' },
 		{0},
 	};
 	unsigned long long calls = 10000000ULL, iterations = 5;
@@ -52,14 +54,16 @@ int main(int argc, char **argv)
 	volatile long sink = 0;
 	int option;
 	int header = 0;
+	int wait_signal = 0;
 
-	while ((option = getopt_long(argc, argv, "c:n:m:s:H", options, NULL)) != -1) {
+	while ((option = getopt_long(argc, argv, "c:n:m:s:HW", options, NULL)) != -1) {
 		switch (option) {
 		case 'c': calls = parse_count(optarg, "call count"); break;
 		case 'n': iterations = parse_count(optarg, "iteration count"); break;
 		case 'm': mode = optarg; break;
 		case 's': syscall_name = optarg; break;
 		case 'H': header = 1; break;
+		case 'W': wait_signal = 1; break;
 		default: return EXIT_FAILURE;
 		}
 	}
@@ -68,6 +72,25 @@ int main(int argc, char **argv)
 	if (strcmp(syscall_name, "getpid") && strcmp(syscall_name, "openat")) {
 		fprintf(stderr, "unsupported syscall: %s\n", syscall_name);
 		return EXIT_FAILURE;
+	}
+	if (wait_signal) {
+		sigset_t set;
+		int signal_number;
+
+		sigemptyset(&set);
+		sigaddset(&set, SIGUSR1);
+		if (sigprocmask(SIG_BLOCK, &set, NULL)) {
+			perror("sigprocmask");
+			return EXIT_FAILURE;
+		}
+		fprintf(stderr,
+			"BENCH_READY pid=%ld mode=%s syscall=%s calls=%llu iterations=%llu\n",
+			(long)getpid(), mode, syscall_name, calls, iterations);
+		fflush(stderr);
+		if (sigwait(&set, &signal_number)) {
+			fprintf(stderr, "sigwait failed\n");
+			return EXIT_FAILURE;
+		}
 	}
 	for (unsigned long long iteration = 1; iteration <= iterations; iteration++) {
 		uint64_t start = monotonic_ns();
