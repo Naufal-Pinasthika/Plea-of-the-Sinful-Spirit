@@ -28,6 +28,7 @@ enum cpuwatch_filter_flags {
 	CPUWATCH_FILTER_SYSCALL = 1U << 1,
 };
 
+// CPU runtime config
 struct cpuwatch_config {
 	__u32 emit_events;
 	__u32 filter_flags;
@@ -43,6 +44,7 @@ struct cpuwatch_config {
 	__u32 reserved;
 };
 
+// CPU stats
 struct cpuwatch_cpu_stats {
 	__u64 syscall_enter;
 	__u64 syscall_exit;
@@ -52,6 +54,7 @@ struct cpuwatch_cpu_stats {
 	__u64 ringbuf_drops;
 };
 
+// event stats
 struct cpuwatch_inflight_syscall {
 	__u64 timestamp_ns;
 	__s64 syscall_nr;

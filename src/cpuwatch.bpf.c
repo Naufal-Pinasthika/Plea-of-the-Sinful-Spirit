@@ -9,6 +9,7 @@
 
 #define CPUWATCH_EAGAIN 11
 
+// using BPF map per CPU
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(max_entries, 1);
@@ -69,8 +70,7 @@ static __always_inline void increment_stat(__u64 *counter)
 	__sync_fetch_and_add(counter, 1);
 }
 
-static __always_inline bool syscall_selected(const struct cpuwatch_config *cfg,
-					      __u32 tgid, __s64 syscall_nr)
+static __always_inline bool syscall_selected(const struct cpuwatch_config *cfg, __u32 tgid, __s64 syscall_nr)
 {
 	if (!cfg)
 		return true;
@@ -104,9 +104,7 @@ static __always_inline void fill_header(struct cpuwatch_event *event, __u32 type
 	bpf_get_current_comm(event->header.comm, sizeof(event->header.comm));
 }
 
-static __always_inline struct cpuwatch_event *reserve_event(
-		const struct cpuwatch_config *cfg, struct cpuwatch_cpu_stats *cpu_stats,
-		__u32 type)
+static __always_inline struct cpuwatch_event *	reserve_event(const struct cpuwatch_config *cfg, struct cpuwatch_cpu_stats *cpu_stats, __u32 type)
 {
 	struct cpuwatch_event *event;
 
@@ -115,8 +113,7 @@ static __always_inline struct cpuwatch_event *reserve_event(
 
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) {
-		if (cpu_stats)
-			increment_stat(&cpu_stats->ringbuf_drops);
+		if (cpu_stats) increment_stat(&cpu_stats->ringbuf_drops);
 		return 0;
 	}
 
@@ -140,15 +137,12 @@ int handle_sys_enter(struct trace_event_raw_sys_enter *ctx)
 	cfg = get_config();
 	if (cfg && cfg->rate_limit_enabled && cfg->rate_limit_tgid == tgid &&
 	    cfg->rate_limit_syscall == syscall_nr)
-		bpf_map_update_elem(&target_inflight, &pid_tgid,
-				    &syscall_nr, BPF_ANY);
+		bpf_map_update_elem(&target_inflight, &pid_tgid, &syscall_nr, BPF_ANY);
 
-	if (!syscall_selected(cfg, tgid, syscall_nr))
-		return 0;
+	if (!syscall_selected(cfg, tgid, syscall_nr)) return 0;
 
 	cpu_stats = get_stats();
-	if (cpu_stats)
-		increment_stat(&cpu_stats->syscall_enter);
+	if (cpu_stats) increment_stat(&cpu_stats->syscall_enter);
 
 	state.timestamp_ns = bpf_ktime_get_ns();
 	state.syscall_nr = syscall_nr;
@@ -161,9 +155,9 @@ int handle_sys_enter(struct trace_event_raw_sys_enter *ctx)
 	state.args[5] = ctx->args[5];
 	bpf_map_update_elem(&inflight, &pid_tgid, &state, BPF_ANY);
 
+	// send to ring buffer
 	event = reserve_event(cfg, cpu_stats, CPUWATCH_EVENT_SYSCALL_ENTER);
-	if (!event)
-		return 0;
+	if (!event) return 0;
 	event->data.syscall_enter.syscall_nr = syscall_nr;
 #pragma unroll
 	for (i = 0; i < 6; i++)
@@ -192,8 +186,7 @@ int handle_sys_exit(struct trace_event_raw_sys_exit *ctx)
 	}
 
 	cpu_stats = get_stats();
-	if (cpu_stats)
-		increment_stat(&cpu_stats->syscall_exit);
+	if (cpu_stats) increment_stat(&cpu_stats->syscall_exit);
 	state = bpf_map_lookup_elem(&inflight, &pid_tgid);
 	if (state && now >= state->timestamp_ns)
 		duration = now - state->timestamp_ns;
@@ -334,8 +327,7 @@ int BPF_PROG(fentry_do_sys_openat2, int dfd, const char *filename,
 }
 
 SEC("fexit/do_sys_openat2")
-int BPF_PROG(fexit_do_sys_openat2, int dfd, const char *filename,
-	     struct open_how *how, long ret)
+int BPF_PROG(fexit_do_sys_openat2, int dfd, const char *filename, struct open_how *how, long ret)
 {
 	struct cpuwatch_config *cfg = get_config();
 

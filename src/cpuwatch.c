@@ -271,8 +271,7 @@ static bool bpf_lsm_enabled(void)
 	return false;
 }
 
-static int attach_one(struct bpf_program *program, struct bpf_link **link,
-		      const char *name, bool required)
+static int attach_one(struct bpf_program *program, struct bpf_link **link, const char *name, bool required)
 {
 	long error;
 
@@ -290,7 +289,7 @@ static int attach_one(struct bpf_program *program, struct bpf_link **link,
 	return (int)error;
 }
 
-static int configure_autoload(struct cpuwatch_bpf *skel, struct app_options *opts)
+static int 	configure_autoload(struct cpuwatch_bpf *skel, struct app_options *opts)
 {
 	bool have_fault = kernel_symbol_exists("handle_mm_fault");
 	bool have_open_symbol = kernel_symbol_exists("do_sys_openat2");
@@ -382,8 +381,7 @@ static int update_config(struct cpuwatch_bpf *skel, const struct app_options *op
 {
 	struct cpuwatch_config cfg = {
 		.emit_events = opts->events,
-		.filter_flags = (opts->have_pid ? CPUWATCH_FILTER_TGID : 0) |
-				(opts->have_syscall ? CPUWATCH_FILTER_SYSCALL : 0),
+		.filter_flags = (opts->have_pid ? CPUWATCH_FILTER_TGID : 0) | (opts->have_syscall ? CPUWATCH_FILTER_SYSCALL : 0),
 		.monitor_tgid = opts->pid,
 		.monitor_syscall = opts->syscall_nr,
 		.pagefault_enabled = opts->pagefault,
@@ -627,9 +625,7 @@ static __u64 counter_delta(__u64 current, __u64 previous)
 	return current >= previous ? current - previous : current;
 }
 
-static int read_rates(int stats_fd, struct cpuwatch_cpu_stats *previous,
-		      struct cpuwatch_cpu_stats *current,
-		      struct cpuwatch_cpu_rate *rates, int nr_cpus, double seconds)
+static int read_rates(int stats_fd, struct cpuwatch_cpu_stats *previous, struct cpuwatch_cpu_stats *current, struct cpuwatch_cpu_rate *rates, int nr_cpus, double seconds)
 {
 	__u32 key = CPUWATCH_STATS_KEY;
 
@@ -758,30 +754,40 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
+	// init libbpf (strict mode), then init skeleton ebpf 
+	// skeleton ebpf is kinda like boilerplate so that itll easy to use
 	libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
 	skel = cpuwatch_bpf__open();
 	if (!skel) {
 		fprintf(stderr, "[ERROR] unable to open BPF skeleton\n");
 		return EXIT_FAILURE;
 	}
+
+	// check if the loaded hook exist/supported 
 	if (configure_autoload(skel, &opts)) {
 		error = -1;
 		goto cleanup;
 	}
+	
+	// check if ebpf is successfully loaded & verified in the kernel
 	if (cpuwatch_bpf__load(skel)) {
-		fprintf(stderr, "[ERROR] BPF load/verifier failed; inspect libbpf output above\n");
+		fprintf(stderr, "[ERROR] BPF load/verifier failed (inspect libbpf output above\n)");
 		error = -1;
 		goto cleanup;
 	}
+
+	// send configuration to kernel, it will be send to map afterward
 	if (update_config(skel, &opts)) {
 		error = -1;
 		goto cleanup;
 	}
+
+	// attach hook to kernel
 	if (attach_programs(skel, &opts)) {
 		error = -1;
 		goto cleanup;
 	}
-	/* Optional attachment can be disabled after the initial config write. */
+	// Optional attachment can be disabled after the initial config write.
 	if (update_config(skel, &opts)) {
 		error = -1;
 		goto cleanup;
@@ -820,6 +826,7 @@ int main(int argc, char **argv)
 		(long)getpid(), nr_cpus, opts.pagefault, opts.fentry,
 		opts.kprobe_open, opts.have_rate_limit);
 
+	// read the stats per CPU
 	while (!exiting) {
 		error = ring_buffer__poll(ring, 100);
 		if (error == -EINTR) {
@@ -831,13 +838,11 @@ int main(int argc, char **argv)
 		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		bool interval_due = elapsed_seconds(&sampled, &now) * 1000.0 >= opts.interval_ms;
-		bool duration_due = opts.duration_sec > 0.0 &&
-			elapsed_seconds(&started, &now) >= opts.duration_sec;
+		bool duration_due = opts.duration_sec > 0.0 && elapsed_seconds(&started, &now) >= opts.duration_sec;
 		bool terminal_due = exiting || duration_due;
 
 		if ((interval_due || terminal_due) &&
-		    sample_and_emit_stats(stats_fd, previous, current, rates, nr_cpus,
-					  &started, &sampled, &now, &opts, uts.release)) {
+		    sample_and_emit_stats(stats_fd, previous, current, rates, nr_cpus, &started, &sampled, &now, &opts, uts.release)) {
 			error = -1;
 			break;
 		}
@@ -850,9 +855,7 @@ int main(int argc, char **argv)
 		int saved_error = error;
 
 		clock_gettime(CLOCK_MONOTONIC, &now);
-		if (sample_and_emit_stats(stats_fd, previous, current, rates, nr_cpus,
-					  &started, &sampled, &now, &opts, uts.release) &&
-		    saved_error >= 0)
+		if (sample_and_emit_stats(stats_fd, previous, current, rates, nr_cpus, &started, &sampled, &now, &opts, uts.release) && saved_error >= 0)
 			error = -1;
 		else
 			error = saved_error;
