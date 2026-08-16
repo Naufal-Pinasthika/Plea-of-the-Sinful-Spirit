@@ -1,0 +1,35 @@
+// demo live 
+sudo ./build/cpuwatch \
+    --events \
+    --interval 1000 \
+    --duration 5
+
+// demo rate limiting
+// tm 1
+./build/rate_limit_test \
+    --cpu 0 \
+    --attempts 200
+
+// tm 2
+sudo ./build/cpuwatch \
+    --events \
+    --pid 1565  \
+    --syscall openat \
+    --rate-limit-pid 1565  \
+    --rate-limit 50 \
+    --interval 100 \
+    --duration 10 \
+
+// check bpf tools
+// tm 1
+sudo ./build/cpuwatch \
+    --no-events \
+    --interval 1000 \
+    --duration 30
+
+// tm 2 
+sudo bpftool prog list | grep sys
+sudo bpftool prog list | grep sche
+
+sudo bpftool map dump name stats
+sudo bpftool map dump name runtime_cfg

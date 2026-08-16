@@ -2,7 +2,37 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_common.sh"
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+evidence_dir="$repo_dir/evidence"
+
+require_root() {
+    [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo "run this script as root inside the test VM" >&2; exit 1; }
+}
+
+require_binary() {
+    local binary
+    for binary in "$@"; do
+        [[ -x "$binary" ]] || { echo "missing $binary; run make first" >&2; exit 1; }
+    done
+}
+
+wait_for_line() {
+    local file=$1 pattern=$2 pid=$3 description=$4
+    for _ in $(seq 1 200); do
+        grep -qE "$pattern" "$file" 2>/dev/null && return 0
+        [[ -z "$pid" ]] || kill -0 "$pid" 2>/dev/null || { echo "$description exited before becoming ready" >&2; return 1; }
+        sleep 0.1
+    done
+    echo "$description did not become ready" >&2
+    return 1
+}
+
+extract_pid() { sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' <<<"$1"; }
+
+save_evidence() {
+    mkdir -p "$evidence_dir"
+    [[ -f "$1" ]] && cp "$1" "$evidence_dir/$2"
+}
 
 require_root
 require_binary "$repo_dir/build/cpuwatch" "$repo_dir/build/pagefault_test"
