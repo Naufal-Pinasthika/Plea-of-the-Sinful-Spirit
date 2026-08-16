@@ -43,6 +43,7 @@ struct app_options {
 
 struct app_context {
 	bool json;
+	__u64 deadline_ns;
 };
 
 static volatile sig_atomic_t exiting;
@@ -51,6 +52,15 @@ static void handle_signal(int signo)
 {
 	(void)signo;
 	exiting = 1;
+}
+
+static __u64 monotonic_ns(void)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now))
+		return 0;
+	return (__u64)now.tv_sec * CPUWATCH_NSEC_PER_SEC + (__u64)now.tv_nsec;
 }
 
 static void usage(FILE *stream, const char *program)
@@ -605,6 +615,8 @@ static int consume_event(void *context, void *data, size_t size)
 	const struct cpuwatch_event *event = data;
 	const struct app_context *app = context;
 
+	if (exiting || (app->deadline_ns && monotonic_ns() >= app->deadline_ns))
+		return 1;
 	if (size < sizeof(*event))
 		return 0;
 	if (app->json)
@@ -732,6 +744,7 @@ int main(int argc, char **argv)
 	struct app_options opts;
 	struct timespec started, sampled, now;
 	struct utsname uts = {0};
+	struct sigaction signal_action = {0};
 	bool terminal_sample_done = false;
 	int nr_cpus, stats_fd, error = 0;
 
@@ -817,10 +830,15 @@ int main(int argc, char **argv)
 	stats_fd = bpf_map__fd(skel->maps.stats);
 	clock_gettime(CLOCK_MONOTONIC, &started);
 	sampled = started;
+	if (opts.duration_sec > 0.0)
+		app.deadline_ns = monotonic_ns() +
+				  (__u64)(opts.duration_sec * CPUWATCH_NSEC_PER_SEC);
 	uname(&uts);
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	signal(SIGINT, handle_signal);
-	signal(SIGTERM, handle_signal);
+	signal_action.sa_handler = handle_signal;
+	sigemptyset(&signal_action.sa_mask);
+	sigaction(SIGINT, &signal_action, NULL);
+	sigaction(SIGTERM, &signal_action, NULL);
 	fprintf(stderr,
 		"CPUWATCH_READY pid=%ld cpus=%d pagefault=%d fentry=%d kprobe_open=%d rate_limit=%d\n",
 		(long)getpid(), nr_cpus, opts.pagefault, opts.fentry,
